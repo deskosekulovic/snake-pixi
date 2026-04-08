@@ -5,6 +5,20 @@ import type { Direction, Settings } from '../types'
 import { Loop } from './Loop'
 import { SnakeGameModel } from './SnakeGameModel'
 
+export type GameOverPayload = Readonly<{
+  score: number
+  settings: Settings
+  /** Increments each time the session ends (stable key for UI remounts). */
+  seq: number
+}>
+
+export type GameCreateOptions = Readonly<{
+  onScoreChange?: (score: number) => void
+  onGameOver?: (payload: GameOverPayload) => void
+  /** When true, game ignores all control keys (e.g. modal UI is open). */
+  getInputBlocked?: () => boolean
+}>
+
 export class Game {
   private app: Application | null = null
   private loop: Loop | null = null
@@ -26,22 +40,30 @@ export class Game {
   private container: HTMLElement
   private settings: Settings
 
+  private onGameOver?: (payload: GameOverPayload) => void
+
+  private getInputBlocked?: () => boolean
+
+  private gameOverSeq = 0
+
   private constructor(
     container: HTMLElement,
     settings: Settings,
-    onScoreChange?: (score: number) => void,
+    options?: GameCreateOptions,
   ) {
     this.container = container
     this.settings = settings
-    this.model = new SnakeGameModel(settings, onScoreChange)
+    this.onGameOver = options?.onGameOver
+    this.getInputBlocked = options?.getInputBlocked
+    this.model = new SnakeGameModel(settings, options?.onScoreChange)
   }
 
   static async create(
     container: HTMLElement,
     settings: Settings,
-    onScoreChange?: (score: number) => void,
+    options?: GameCreateOptions,
   ): Promise<Game> {
-    const g = new Game(container, settings, onScoreChange)
+    const g = new Game(container, settings, options)
     await g.init()
     return g
   }
@@ -91,6 +113,7 @@ export class Game {
 
   private setupControls() {
     this.onControls = (e: KeyboardEvent) => {
+      if (this.getInputBlocked?.()) return
       if (this.isReplaying) return
 
       switch (e.key) {
@@ -140,7 +163,17 @@ export class Game {
   }
 
   private tick() {
+    const wasOver = this.model.gameOver
     const outcome = this.model.tick()
+
+    if (!wasOver && this.model.gameOver) {
+      this.gameOverSeq += 1
+      this.onGameOver?.({
+        score: this.model.getScore(),
+        settings: this.settings,
+        seq: this.gameOverSeq,
+      })
+    }
 
     if (outcome.kind === 'continue') {
       this.replaySystem.push(this.model.getSegments(), this.model.getFood())
